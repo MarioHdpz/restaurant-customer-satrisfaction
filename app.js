@@ -5,6 +5,8 @@ Customer satisfaction API
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
 // Global app object
 const app = express();
@@ -40,7 +42,54 @@ const ReviewSchema = mongoose.Schema({
     }
 });
 
+const UserSchema = mongoose.Schema({
+    email: {
+        type: String,
+        required: true
+    },
+    password: {
+        type: String,
+        required: true
+    }
+});
+
+const User = mongoose.model("user", UserSchema);
+
 const Review = mongoose.model("review", ReviewSchema);
+
+function checkCredentials(req, res, next) {
+    const token = req.headers.authorization;
+    if (!token) {
+        return res.status(401).send({"message": "A token is required for authorization"});
+    }
+    try {
+        const user = jwt.verify(token, process.env.API_KEY);
+        req.userId = user.id;
+        next()
+    } catch (error) {
+        return res.status(401).send({"message": "Invalid API token"});
+    }
+};
+
+app.post("/sign-up", function(req, res) {
+    const password = bcrypt.hashSync(req.body.password, 10);
+    User.create({ ...req.body, password: password }).then(function (user) {
+        res.status(201).send(user);
+    })
+});
+
+app.post("/login", function(req, res) {
+    const { email, password } = req.body;
+    User.findOne({ email: email}).then(function (user) {
+        if (!bcrypt.compareSync(password, user.password)) {
+            res.status(401).send({"message": "Incorrect user or password"})
+        }
+        const token = jwt.sign({
+            id: user._id, 
+        }, process.env.API_KEY);
+        res.send({ token: token });
+    });
+});
 
 app.post("/review", function(req, res) {
     Review.create(req.body).then(function (review) {
@@ -48,7 +97,7 @@ app.post("/review", function(req, res) {
     });
 })
 
-app.get("/report", function(req, res) {
+app.get("/report", checkCredentials, function(req, res) {    
     Review.find().then(function (reviews) {
         const clients = reviews.length;
         const scoreSum = reviews.reduce(function (sum, review) {
@@ -62,7 +111,7 @@ app.get("/report", function(req, res) {
     });
 })
 
-app.get("/report/:locationId", function(req, res) {
+app.get("/report/:locationId", checkCredentials, function(req, res) {
     const locationId = req.params.locationId;
     Review.find({locationId: locationId}).then(function (reviews) {
         const clients = reviews.length;
